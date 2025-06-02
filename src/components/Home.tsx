@@ -6,6 +6,14 @@ import { useUserProfile } from '../hooks/useUserProfile';
 import { usePrayers } from '../hooks/usePrayers';
 import Hero from "./Hero";
 
+// YouTube API 키와 채널 ID 설정
+const YOUTUBE_API_KEY = 'YOUR_API_KEY';
+const SEARCH_QUERIES = [
+  '설교',
+  '목사 설교',
+  '크리스천 설교'
+];
+
 const Home = () => {
   const [user] = useAuthState(auth);
   const { userName, loading: profileLoading } = useUserProfile(user || null);
@@ -14,6 +22,7 @@ const Home = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const prayersPerPage = 5;
   const [verse, setVerse] = useState<{ verse: string; ref: string; date: string } | null>(null);
+  const [sermonVideos, setSermonVideos] = useState<Array<{ videoId: string; title: string; channelTitle: string; viewCount: string; publishedAt: string }>>([]);
 
   // 오늘 날짜 문자열 생성
   const today = new Date();
@@ -45,15 +54,82 @@ const Home = () => {
       try {
         const res = await fetch('/verses.json');
         const data = await res.json();
-        // 날짜가 일치하는 말씀 찾기, 없으면 첫 번째 말씀
-        const todayVerse = data.find((item: any) => item.date === todayString);
-        setVerse(todayVerse || data[0] || null);
+        // 오늘 날짜의 말씀을 직접 접근
+        const todayVerse = data[todayString];
+        setVerse(todayVerse ? { verse: todayVerse, ref: todayVerse.split(' - ')[0], date: todayString } : null);
       } catch (e) {
         setVerse(null);
       }
     };
     fetchVerse();
   }, [todayString]);
+
+  // YouTube API를 사용하여 인기 있는 설교 영상 가져오기
+  useEffect(() => {
+    const fetchPopularSermons = async () => {
+      try {
+        const videoPromises = SEARCH_QUERIES.map(async (query) => {
+          const response = await fetch(
+            `https://www.googleapis.com/youtube/v3/search?key=${YOUTUBE_API_KEY}&q=${encodeURIComponent(query)}&part=snippet,id&order=viewCount&maxResults=1&type=video&relevanceLanguage=ko&regionCode=KR`
+          );
+          
+          const data = await response.json();
+          
+          if (data.items && data.items.length > 0) {
+            const video = data.items[0];
+            
+            // 영상 상세 정보 가져오기 (조회수 등)
+            const videoDetailsResponse = await fetch(
+              `https://www.googleapis.com/youtube/v3/videos?key=${YOUTUBE_API_KEY}&id=${video.id.videoId}&part=statistics,contentDetails`
+            );
+            const videoDetails = await videoDetailsResponse.json();
+            
+            return {
+              videoId: video.id.videoId,
+              title: video.snippet.title,
+              channelTitle: video.snippet.channelTitle,
+              viewCount: videoDetails.items[0].statistics.viewCount,
+              publishedAt: video.snippet.publishedAt
+            };
+          }
+          return null;
+        });
+
+        const videos = await Promise.all(videoPromises);
+        setSermonVideos(videos.filter(video => video !== null) as Array<{ videoId: string; title: string; channelTitle: string; viewCount: string; publishedAt: string }>);
+      } catch (error) {
+        console.error('설교 영상을 가져오는데 실패했습니다:', error);
+      }
+    };
+
+    fetchPopularSermons();
+  }, []);
+
+  // 날짜 포맷팅 함수
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffTime = Math.abs(now.getTime() - date.getTime());
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    
+    if (diffDays === 0) return '오늘';
+    if (diffDays === 1) return '어제';
+    if (diffDays < 7) return `${diffDays}일 전`;
+    if (diffDays < 30) return `${Math.floor(diffDays / 7)}주 전`;
+    return `${Math.floor(diffDays / 30)}개월 전`;
+  };
+
+  // 조회수 포맷팅 함수
+  const formatViewCount = (count: string) => {
+    const num = parseInt(count);
+    if (num >= 10000) {
+      return `${(num / 10000).toFixed(1)}만회`;
+    }
+    if (num >= 1000) {
+      return `${(num / 1000).toFixed(1)}천회`;
+    }
+    return `${num}회`;
+  };
 
   return (
     <div className="text-gray-800 font-sans">
@@ -132,7 +208,54 @@ const Home = () => {
         </div>
       </section>
 
-      {/* 성경 말씀 섹션 */}
+      {/* 말씀듣기 섹션 */}
+      <section className="relative py-32 px-4 text-center bg-black text-white">
+        <div className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-10"
+          style={{
+            backgroundImage: "url('https://images.unsplash.com/photo-1511632765486-a01980e01a18?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=2070&q=80')"
+          }}
+        />
+        <div className="relative max-w-7xl mx-auto">
+          <h2 className="text-6xl font-serif mb-8">📖 말씀 듣기</h2>
+          <p className="text-2xl text-gray-300 mb-16 leading-relaxed">
+            오늘의 추천 설교로 영혼을 채우세요.<br />
+            하나님의 말씀이 당신의 삶을 변화시킬 것입니다.
+          </p>
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            {sermonVideos.map((video, index) => (
+              <div key={index} className="bg-black/50 p-8 rounded-lg border border-yellow-300/20 hover:border-yellow-300/40 transition-all duration-300">
+                <div className="aspect-video mb-6">
+                  <iframe
+                    className="w-full h-full rounded-lg"
+                    src={`https://www.youtube.com/embed/${video.videoId}`}
+                    title="YouTube video player"
+                    frameBorder="0"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                  ></iframe>
+                </div>
+                <div className="text-left">
+                  <p className="text-lg text-yellow-300 mb-2 font-medium">{video.channelTitle}</p>
+                  <p className="text-gray-300 mb-4 line-clamp-2">{video.title}</p>
+                  <div className="flex items-center text-sm text-gray-400">
+                    <span className="mr-4">조회수 {formatViewCount(video.viewCount)}</span>
+                    <span>{formatDate(video.publishedAt)}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-16">
+            <button className="px-8 py-4 bg-yellow-300 text-black rounded-full font-medium hover:bg-yellow-400 transition duration-300 text-lg">
+              더 많은 설교 보기
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* 기존 성경 말씀 섹션에서 말씀듣기 부분 제거 */}
       <section className="relative py-32 px-4 text-center bg-gray-900 text-white">
         <div className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-20"
           style={{
